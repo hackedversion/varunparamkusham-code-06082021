@@ -1,0 +1,328 @@
+
+{
+    "AWSTemplateFormatVersion": "2010-09-09",
+    "Parameters": {
+        "AccountID": {
+            "Description": "AWS Account id",
+            "Type": "String",
+            "Default": "12345678"
+        },
+        "S3BucketName": {
+            "Description": "S3 bucket where the lambda.zip is stored",
+            "Type": "String",
+            "Default": "abc-def-ghi"
+        },
+        "S3path": {
+            "Description": "S3 path where the lambda.zip is stored wihout the bucket name",
+            "Type": "String",
+            "Default": "lambdas/lambda.zip"
+        }
+    },
+    "Resources": {
+        "IAM": {
+            "Type": "AWS::IAM::Role",
+            "Properties": {
+                "AssumeRolePolicyDocument": {
+                    "Version": "2012-10-17",
+                    "Statement": [
+                        {
+                            "Effect": "Allow",
+                            "Principal": {
+                                "Service": [
+                                    "glue.amazonaws.com",
+                                    "lambda.amazonaws.com"
+                                ]
+                            },
+                            "Action": [
+                                "sts:AssumeRole"
+                            ]
+                        }
+                    ]
+                },
+                "Path": "/",
+                "Policies": [
+                    {
+                        "PolicyName": "sqs-lambda-role-policy",
+                        "PolicyDocument": {
+                            "Version": "2012-10-17",
+                            "Statement": [
+                                {
+                                    "Effect": "Allow",
+                                    "Action": "s3:*",
+                                    "Resource": "*"
+                                }
+                            ]
+                        }
+                    }
+                ],
+                "RoleName": "sqs-lambda-role"
+            }
+        },
+        "SQSQ2UIH": {
+                  "Type": "AWS::SQS::Queue",
+                  "Properties": {
+                      "FifoQueue" : "true",
+                      "QueueName" : "test-sqs.fifo"
+                  }
+              },
+        "SQSPolicy" : {
+                  "Type" : "AWS::SQS::QueuePolicy",
+                  "Properties" : {
+                  "Queues" :  [
+                      { "Ref" : "SQSQ2UIH" }
+                  ],
+                  "PolicyDocument": {
+                      "Statement":[{
+                      "Action":["SQS:SendMessage", "SQS:ReceiveMessage"],
+                      "Effect":"Allow",
+                      "Resource": {
+                          "Fn::GetAtt": [
+                            "SQSQ2UIH",
+                            "Arn"
+                          ]
+                        },
+                      "Principal": {
+                          "AWS": [{
+                              "Ref": "AccountID"
+                          }]
+                      }
+                  }]
+                  }
+                  }
+        },
+      "lambda": {
+            "Type": "AWS::Lambda::Function",
+            "Properties": {
+                "Handler": "lambda_function.lambda_handler",
+                "MemorySize": 128,
+                "Runtime": "python3.8",
+                "Timeout": 30,
+                "FunctionName": "sqs-test-job",
+                "Role": {
+                    "Fn::Join": [
+                        "",
+                        [
+                            "arn:aws:iam::",
+                            {
+                                "Ref": "AccountID"
+                            },
+                            ":role/sqs-lambda-role"
+                        ]
+                    ]
+                },
+                "Code": {
+                    "S3Bucket": {
+                        "Ref": "S3BucketName"
+                    },
+                    "S3Key": {
+                        "Ref": "S3path"
+                    }
+                    }
+                }
+            },
+            "DependsOn": [
+                "IAM"
+            ]
+        },
+        "lambdaSqs": {
+              "Type" : "AWS::Lambda::EventSourceMapping",
+              "Properties" : {
+                  "Enabled" : true,
+                  "EventSourceArn" : {
+                    "Fn::GetAtt": [
+                      "SQSQ2UIH",
+                      "Arn"
+                    ]
+                  },
+                  "FunctionName" : {"Ref": "lambda"}
+            }
+        }
+    }
+}
+
+{
+  "Statement": [{
+    "Effect":"Allow",
+    "Principal": {
+      "Service": "sns.amazonaws.com"
+    },
+    "Action":"sqs:SendMessage",
+    "Resource":"arn:aws:sqs:us-east-2:123456789012:MyQueue",
+    "Condition":{
+      "ArnEquals":{
+        "aws:SourceArn":"arn:aws:sns:us-east-2:123456789012:MyTopic"
+      }
+    }
+  }]
+}
+
+{
+  "Statement": [{
+    "Effect": "Allow",
+    "Action": "sns:Publish",
+    "Resource": "arn:aws:sns:us-east-2:123456789012:MyTopic"
+  }]
+}
+
+{
+  "Statement":[{
+    "Effect":"Allow",
+    "Action":[
+      "sqs:ReceiveMessage",
+      "sqs:DeleteMessage"
+    ],
+    "Resource":[
+      "arn:aws:sqs:us-east-2:123456789012:MyQueue1",
+      "arn:aws:sqs:us-east-2:123456789012:MyQueue2"
+    ]
+  }]
+}
+
+{
+  "Statement":[{
+    "Effect":"Allow",
+    "Principal":{
+      "AWS":"111122223333"
+    },
+    "Action":"sns:Publish",
+    "Resource":"arn:aws:sns:us-east-2:123456789012:MyTopic"
+  }]
+}
+
+{
+  "Statement":[{
+    "Effect":"Allow",
+    "Principal":{
+      "AWS":"111122223333"
+    },
+    "Action":[
+      "sqs:DeleteMessage",
+      "sqs:ReceiveMessage"
+    ],
+    "Resource":[
+      "arn:aws:sqs:us-east-2:123456789012:MyQueue"
+    ]
+  }]
+}
+
+{
+    "AWSTemplateFormatVersion": "2010-09-09",
+    "Resources": {
+        "S3Bucket": {
+            "Type": "AWS::S3::Bucket",
+            "Properties": {
+                "AccessControl": "Private",
+                "LifecycleConfiguration": {
+                    "Rules": [
+                        {
+                            "Id": "GlacierRule",
+                            "Prefix": "glacier",
+                            "Status": "Enabled",
+                            "ExpirationInDays": 365,
+                            "Transitions": [
+                                {
+                                    "TransitionInDays": 1,
+                                    "StorageClass": "GLACIER"
+                                }
+                            ]
+                        }
+                    ]
+                }
+            }
+        }
+    },
+    "Outputs": {
+        "BucketName": {
+            "Value": {
+                "Ref": "S3Bucket"
+            },
+            "Description": "Name of the sample Amazon S3 bucket with a lifecycle configuration."
+        }
+    }
+}
+
+
+"mybucketpolicy" : {
+   "Type" : "AWS::S3::BucketPolicy",
+   "Properties" : {
+      "PolicyDocument" : {
+         "Id" : "MyPolicy",
+         "Version": "2012-10-17",
+         "Statement" : [ {
+            "Sid" : "ReadAccess",
+            "Action" : [ "s3:GetObject" ],
+            "Effect" : "Allow",
+            "Resource" : { "Fn::Join" : [
+                  "", [ "arn:aws:s3:::", { "Ref" : "mybucket" } , "/*" ]
+               ] },
+            "Principal" : {
+               "AWS" : { "Fn::GetAtt" : [ "user1", "Arn" ] }
+            }
+         } ]
+      },
+      "Bucket" : { "Ref" : "mybucket" }
+   }
+}
+
+
+"mysnspolicy" : {
+   "Type" : "AWS::SNS::TopicPolicy",
+   "Properties" : {
+      "PolicyDocument" :  {
+         "Id" : "MyTopicPolicy",
+         "Version" : "2012-10-17",
+         "Statement" : [ {
+            "Sid" : "My-statement-id",
+            "Effect" : "Allow",
+            "Principal" : {
+               "AWS" : { "Fn::GetAtt" : [ "myuser", "Arn" ] }
+            },
+            "Action" : "sns:Publish",
+            "Resource" : "*"
+         } ]
+      },
+      "Topics" : [ { "Ref" : "mytopic" } ]
+   }
+}
+
+
+"mysqspolicy" : {
+   "Type" : "AWS::SQS::QueuePolicy",
+   "Properties" : {
+      "PolicyDocument" : {
+         "Id" : "MyQueuePolicy",
+         "Version" : "2012-10-17",
+         "Statement" : [ {
+            "Sid" : "Allow-User-SendMessage",
+            "Effect" : "Allow",
+            "Principal" : {
+               "AWS" : "arn:aws:iam::123456789012:user/myapp"
+            },
+            "Action" : [ "sqs:SendMessage" ],
+            "Resource" : "*"
+         } ]
+      },
+      "Queues" : [
+         "https://sqs.us-east-2.amazonaws.com/123456789012/myexistingqueue",
+         { "Ref" : "myqueue" }
+      ]
+   }
+}
+
+
+"mypolicy" : {
+   "Type" : "AWS::IAM::Policy",
+   "Properties" : {
+      "PolicyName" : "mygrouppolicy",
+      "PolicyDocument" : {
+         "Version": "2012-10-17",
+         "Statement" : [ {
+            "Effect" : "Allow",
+            "Action" : [
+               "s3:GetObject" , "s3:PutObject" , "s3:PutObjectAcl" ],
+            "Resource" : "arn:aws:s3:::myAWSBucket/*"
+         } ]
+      },
+      "Groups" : [ "myexistinggroup1", { "Ref" : "mygroup" } ]
+   }
+}
